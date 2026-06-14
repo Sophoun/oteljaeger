@@ -528,21 +528,6 @@ oteljaeger/
 
 ---
 
-## Building
-
-```bash
-# Build fat JAR
-./gradlew :oteljaeger-spring-boot-starter:shadowJar
-
-# Build demo app
-./gradlew :oteljaeger-demo:bootJar
-
-# Build everything
-./gradlew clean build
-```
-
----
-
 ## License
 
 Apache License 2.0
