@@ -10,6 +10,7 @@ A Spring Boot starter library for automatic distributed tracing using OpenTeleme
 - Request/response header capture (configurable)
 - Context propagation across service calls
 - Auto-configured RestTemplate with tracing interceptor
+- **Fat JAR** with all dependencies included
 
 ## Requirements
 
@@ -17,13 +18,40 @@ A Spring Boot starter library for automatic distributed tracing using OpenTeleme
 - Spring Boot 2.0.x - 2.7.x
 - Jaeger (via Docker or external)
 
-## Quick Start
+---
 
-### 1. Add Dependency
+## Quick Start (Fat JAR)
+
+### 1. Build the Fat JAR
+
+```bash
+./gradlew :oteljaeger-spring-boot-starter:shadowJar
+```
+
+Output:
+```
+oteljaeger-spring-boot-starter/build/libs/oteljaeger-spring-boot-starter-0.0.1-SNAPSHOT.jar (20 MB)
+```
+
+### 2. Copy JAR to Your Project
+
+```bash
+mkdir -p libs
+cp oteljaeger-spring-boot-starter/build/libs/oteljaeger-spring-boot-starter-0.0.1-SNAPSHOT.jar libs/
+```
+
+### 3. Add Dependency
 
 **Gradle:**
 ```kotlin
-implementation("com.sophoun:oteljaeger-spring-boot-starter:0.0.1-SNAPSHOT")
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation(fileTree("libs") { include("*.jar") })
+    implementation("org.springframework.boot:spring-boot-starter-web")
+}
 ```
 
 **Maven:**
@@ -32,12 +60,12 @@ implementation("com.sophoun:oteljaeger-spring-boot-starter:0.0.1-SNAPSHOT")
     <groupId>com.sophoun</groupId>
     <artifactId>oteljaeger-spring-boot-starter</artifactId>
     <version>0.0.1-SNAPSHOT</version>
+    <scope>system</scope>
+    <systemPath>${project.basedir}/libs/oteljaeger-spring-boot-starter-0.0.1-SNAPSHOT.jar</systemPath>
 </dependency>
 ```
 
-### 2. Enable Tracing
-
-Add `@EnableOtelJaeger` to your Spring Boot application class:
+### 4. Enable Tracing
 
 ```java
 @SpringBootApplication
@@ -49,31 +77,19 @@ public class MyApplication {
 }
 ```
 
-### 3. Configure
+### 5. Configure
 
-Add to `application.properties`:
-
+**application.properties:**
 ```properties
-# Service name shown in Jaeger UI
 oteljaeger.service-name=my-service
-
-# OTLP HTTP endpoint (default: http://localhost:4318/v1/traces)
 oteljaeger.exporter-endpoint=http://localhost:4318/v1/traces
-
-# Enable/disable tracing (default: true)
 oteljaeger.enabled=true
-
-# Capture request/response headers (default: true)
 oteljaeger.capture-headers=true
-
-# Capture request/response bodies (default: true)
 oteljaeger.capture-bodies=true
-
-# Maximum body size in bytes, -1 for unlimited (default: 65536)
 oteljaeger.max-body-size=65536
 ```
 
-### 4. Start Jaeger
+### 6. Start Jaeger
 
 ```bash
 docker-compose up -d
@@ -92,9 +108,49 @@ services:
       - "4318:4318"    # OTLP HTTP
 ```
 
-### 5. Access Jaeger UI
+### 7. Test
+
+```bash
+curl http://localhost:8080/api/user
+```
+
+### 8. View Traces
 
 Open http://localhost:16686 in your browser.
+
+---
+
+## Alternative: Use from Maven Repository
+
+### Local Maven
+
+```bash
+./gradlew :oteljaeger-spring-boot-starter:publishToMavenLocal
+```
+
+```kotlin
+repositories {
+    mavenLocal()
+}
+
+dependencies {
+    implementation("com.sophoun:oteljaeger-spring-boot-starter:0.0.1-SNAPSHOT")
+}
+```
+
+### Maven Central
+
+```kotlin
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    implementation("com.sophoun:oteljaeger-spring-boot-starter:1.0.0")
+}
+```
+
+---
 
 ## What Gets Traced
 
@@ -123,9 +179,23 @@ GET /api/users/1 (2340ms)
   HTTP GET /todos (195ms)
 ```
 
-## Auto-Configured Beans
+---
 
-The starter auto-configures:
+## Configuration Reference
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `oteljaeger.enabled` | `true` | Enable/disable tracing |
+| `oteljaeger.service-name` | `oteljaeger` | Service name in Jaeger UI |
+| `oteljaeger.exporter-endpoint` | `http://localhost:4318/v1/traces` | OTLP HTTP endpoint |
+| `oteljaeger.exporter-timeout-seconds` | `10` | Exporter timeout |
+| `oteljaeger.capture-headers` | `true` | Capture request/response headers |
+| `oteljaeger.capture-bodies` | `true` | Capture request/response bodies |
+| `oteljaeger.max-body-size` | `65536` | Max body size to capture (-1 for unlimited) |
+
+---
+
+## Auto-Configured Beans
 
 | Bean | Description |
 |------|-------------|
@@ -137,6 +207,8 @@ The starter auto-configures:
 | `RestTemplate` | Pre-configured with tracing interceptor |
 
 All beans use `@ConditionalOnMissingBean`, so you can override any of them.
+
+---
 
 ## Custom RestTemplate
 
@@ -152,6 +224,8 @@ public RestTemplate restTemplate(RestTemplateBuilder builder) {
 }
 ```
 
+---
+
 ## Disabling Tracing
 
 ```properties
@@ -164,78 +238,51 @@ Or exclude auto-configuration:
 @SpringBootApplication(exclude = {OtelJaegerAutoConfiguration.class})
 ```
 
+---
+
 ## Project Structure
 
 ```
 oteljaeger/
-├── oteljaeger-spring-boot-starter/  # Library
+├── build.gradle.kts                        # Root build
+├── settings.gradle.kts                     # Multi-module config
+├── docker-compose.yml                      # Jaeger setup
+├── README.md                               # This file
+├── oteljaeger-spring-boot-starter/         # Library (Fat JAR)
+│   ├── build.gradle.kts
 │   └── src/main/java/.../starter/
-│       ├── EnableOtelJaeger.java
-│       ├── OtelJaegerProperties.java
-│       ├── OtelJaegerAutoConfiguration.java
-│       ├── OpenTelemetryFilter.java
-│       ├── RestTemplateInterceptor.java
-│       └── RestTemplateBeanPostProcessor.java
-├── oteljaeger-demo/                 # Demo application
-└── docker-compose.yml               # Jaeger setup
+│       ├── EnableOtelJaeger.java           # @EnableOtelJaeger annotation
+│       ├── OtelJaegerProperties.java       # Configuration properties
+│       ├── OtelJaegerAutoConfiguration.java # Auto-configuration
+│       ├── OpenTelemetryFilter.java        # Inbound tracing
+│       ├── RestTemplateInterceptor.java    # Outbound tracing
+│       ├── RestTemplateBeanPostProcessor.java # Auto-adds interceptor
+│       └── OtelConfig.java                # OTEL SDK setup
+└── oteljaeger-demo/                        # Demo application
+    ├── build.gradle.kts
+    └── src/main/java/.../demo/
+        ├── OteljaegerDemoApplication.java  # @EnableOtelJaeger
+        ├── UserController.java             # REST endpoints
+        ├── ExternalUserService.java        # External API calls
+        └── UserPipelineService.java        # 7-step pipeline
 ```
 
-## Publishing to Maven
+---
 
-### Local Maven Repository
+## Building
 
 ```bash
-./gradlew :oteljaeger-spring-boot-starter:publishToMavenLocal
+# Build fat JAR
+./gradlew :oteljaeger-spring-boot-starter:shadowJar
+
+# Build demo app
+./gradlew :oteljaeger-demo:bootJar
+
+# Build everything
+./gradlew clean build
 ```
 
-Then use in other projects:
-
-```kotlin
-repositories {
-    mavenLocal()
-}
-
-dependencies {
-    implementation("com.sophoun:oteljaeger-spring-boot-starter:0.0.1-SNAPSHOT")
-}
-```
-
-### Maven Central (via Sonatype OSSRH)
-
-1. Create account at https://issues.sonatype.org and request access to `ossrh`
-
-2. Create `~/.gradle/gradle.properties`:
-```properties
-ossrhUsername=your-username
-ossrhPassword=your-password
-signing.keyId=your-key-id
-signing.password=your-key-password
-signing.secretKeyRingFile=/path/to/secring.gpg
-```
-
-3. Publish:
-```bash
-./gradlew :oteljaeger-spring-boot-starter:publishMavenPublicationToOSSRHRepository
-```
-
-### Private Repository (Artifactory/Nexus)
-
-Update `build.gradle.kts` and run:
-```bash
-./gradlew :oteljaeger-spring-boot-starter:publish
-```
-
-### Release Version
-
-1. Update version in `build.gradle.kts`:
-```kotlin
-version = "1.0.0"
-```
-
-2. Publish:
-```bash
-./gradlew :oteljaeger-spring-boot-starter:publishToMavenLocal
-```
+---
 
 ## License
 

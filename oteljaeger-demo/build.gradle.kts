@@ -12,7 +12,7 @@ dependencyManagement {
 }
 
 dependencies {
-	implementation(project(":oteljaeger-spring-boot-starter"))
+	implementation(fileTree("libs") { include("*.jar") })
 	implementation("org.springframework.boot:spring-boot-starter-web")
 
 	testImplementation("org.springframework.boot:spring-boot-starter-test")
