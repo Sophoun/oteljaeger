@@ -2,6 +2,7 @@ package com.sophoun.oteljaeger.starter;
 
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Tracer;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
@@ -10,6 +11,8 @@ import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.reactive.function.client.ExchangeFilterFunction;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Duration;
 
@@ -62,5 +65,19 @@ public class OtelJaegerAutoConfiguration {
 				.setConnectTimeout(Duration.ofSeconds(5))
 				.setReadTimeout(Duration.ofSeconds(5))
 				.build();
+	}
+
+	@Bean
+	@ConditionalOnMissingBean
+	@ConditionalOnClass(WebClient.class)
+	public ExchangeFilterFunction webClientFilter(Tracer tracer, OtelJaegerProperties properties) {
+		return new WebClientFilter(tracer, properties);
+	}
+
+	@Bean
+	@ConditionalOnMissingBean
+	@ConditionalOnClass(WebClient.class)
+	public WebClientBeanPostProcessor webClientBeanPostProcessor(ExchangeFilterFunction webClientFilter) {
+		return new WebClientBeanPostProcessor(webClientFilter);
 	}
 }

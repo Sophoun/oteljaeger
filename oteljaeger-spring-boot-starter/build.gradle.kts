@@ -17,6 +17,7 @@ java {
 dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-web:2.6.0")
 	implementation("org.springframework.boot:spring-boot-autoconfigure:2.6.0")
+	compileOnly("org.springframework.boot:spring-boot-starter-webflux:2.6.0")
 
 	implementation("io.opentelemetry:opentelemetry-sdk:1.20.0")
 	implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.20.0")
