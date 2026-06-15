@@ -4,8 +4,14 @@ import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.context.Context;
+import org.reactivestreams.Publisher;
+import org.springframework.core.io.buffer.DataBuffer;
+import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.core.io.buffer.DefaultDataBufferFactory;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.client.reactive.ClientHttpRequest;
+import org.springframework.http.client.reactive.ClientHttpRequestDecorator;
+import org.springframework.web.reactive.function.BodyInserter;
 import org.springframework.web.reactive.function.client.ClientRequest;
 import org.springframework.web.reactive.function.client.ClientResponse;
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction;
@@ -48,7 +54,9 @@ class WebClientFilter implements ExchangeFilterFunction {
 				);
 			}
 
-			return next.exchange(request)
+			ClientRequest wrappedRequest = wrapRequestForBodyCapture(request, span);
+
+			return next.exchange(wrappedRequest)
 					.flatMap(response -> {
 						captureResponseHeaders(response, span);
 
@@ -84,6 +92,45 @@ class WebClientFilter implements ExchangeFilterFunction {
 			span.end();
 			return Mono.error(e);
 		}
+	}
+
+	@SuppressWarnings({"unchecked", "rawtypes"})
+	private ClientRequest wrapRequestForBodyCapture(ClientRequest request, Span span) {
+		if (!properties.isCaptureBodies()) {
+			return request;
+		}
+
+		BodyInserter originalBody = request.body();
+		if (originalBody == null) {
+			return request;
+		}
+
+		BodyInserter wrappedBody = (outputMessage, context) -> {
+					ClientHttpRequest clientHttpRequest = (ClientHttpRequest) outputMessage;
+					ClientHttpRequestDecorator decorator = new ClientHttpRequestDecorator(clientHttpRequest) {
+						@Override
+						public Mono<Void> writeWith(Publisher<? extends DataBuffer> body) {
+							if (body instanceof Mono) {
+								Mono<? extends DataBuffer> mono = (Mono<? extends DataBuffer>) body;
+								return mono.flatMap(dataBuffer -> {
+									byte[] bytes = new byte[dataBuffer.readableByteCount()];
+									dataBuffer.read(bytes);
+									DataBufferUtils.release(dataBuffer);
+									String requestBody = truncate(new String(bytes, StandardCharsets.UTF_8));
+									span.setAttribute("http.request.body", requestBody);
+									return super.writeWith(Mono.just(
+											DefaultDataBufferFactory.sharedInstance.wrap(bytes)));
+								});
+							}
+							return super.writeWith(body);
+						}
+					};
+					return originalBody.insert(decorator, context);
+				};
+
+		return ClientRequest.from(request)
+				.body(wrappedBody)
+				.build();
 	}
 
 	private void captureResponseHeaders(ClientResponse response, Span span) {
