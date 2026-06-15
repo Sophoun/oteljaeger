@@ -1,5 +1,6 @@
 package com.sophoun.oteljaeger.demo;
 
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 
@@ -50,5 +51,15 @@ public class ExternalUserWebClientService {
 			return (List<Map<String, Object>>) result;
 		}
 		return Collections.emptyList();
+	}
+
+	public Map<String, Object> createPost(Map<String, Object> post) {
+		return webClient.post()
+				.uri("/posts")
+				.contentType(MediaType.APPLICATION_JSON)
+				.bodyValue(post)
+				.retrieve()
+				.bodyToMono(Map.class)
+				.block();
 	}
 }
