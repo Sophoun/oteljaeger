@@ -2,6 +2,9 @@ package com.sophoun.oteljaeger.starter;
 
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Tracer;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -9,6 +12,7 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplicat
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction;
@@ -19,6 +23,11 @@ import java.time.Duration;
 /**
  * Auto-configuration for OpenTelemetry + Jaeger tracing.
  * Activated when {@code @EnableOtelJaeger} is present.
+ *
+ * <p>When the OTel Java agent is attached at runtime (via RuntimeAttachRunListener),
+ * it provides its own OpenTelemetry instance and automatically instruments HTTP clients.
+ * In that case, the custom OpenTelemetry SDK, RestTemplate interceptor, and WebClientFilter
+ * are skipped to avoid conflicts.</p>
  */
 @Configuration
 @ConditionalOnWebApplication
@@ -26,9 +35,15 @@ import java.time.Duration;
 @EnableConfigurationProperties(OtelJaegerProperties.class)
 public class OtelJaegerAutoConfiguration {
 
+	private static final Logger log = LoggerFactory.getLogger(OtelJaegerAutoConfiguration.class);
+
 	@Bean
 	@ConditionalOnMissingBean
 	public OpenTelemetry openTelemetry(OtelJaegerProperties properties) {
+		if (isAgentActive()) {
+			log.info("OTel Java agent detected. Using agent-provided OpenTelemetry instance.");
+			return io.opentelemetry.api.GlobalOpenTelemetry.get();
+		}
 		OtelConfig config = new OtelConfig(properties);
 		return config.openTelemetry();
 	}
@@ -36,23 +51,25 @@ public class OtelJaegerAutoConfiguration {
 	@Bean
 	@ConditionalOnMissingBean
 	public Tracer tracer(OpenTelemetry openTelemetry, OtelJaegerProperties properties) {
-		OtelConfig config = new OtelConfig(properties);
-		return config.tracer(openTelemetry);
+		return openTelemetry.getTracer(properties.getServiceName());
 	}
 
 	@Bean
+	@Conditional(AgentNotActiveCondition.class)
 	@ConditionalOnMissingBean
 	public OpenTelemetryFilter openTelemetryFilter(Tracer tracer, OtelJaegerProperties properties) {
 		return new OpenTelemetryFilter(tracer, properties);
 	}
 
 	@Bean
+	@Conditional(AgentNotActiveCondition.class)
 	@ConditionalOnMissingBean
 	public RestTemplateInterceptor restTemplateInterceptor(Tracer tracer, OtelJaegerProperties properties) {
 		return new RestTemplateInterceptor(tracer, properties);
 	}
 
 	@Bean
+	@Conditional(AgentNotActiveCondition.class)
 	@ConditionalOnMissingBean
 	public RestTemplateBeanPostProcessor restTemplateBeanPostProcessor(RestTemplateInterceptor interceptor) {
 		return new RestTemplateBeanPostProcessor(interceptor);
@@ -68,23 +85,34 @@ public class OtelJaegerAutoConfiguration {
 	}
 
 	@Bean
-	@ConditionalOnMissingBean
+	@Conditional(AgentNotActiveCondition.class)
+	@ConditionalOnMissingBean(ExchangeFilterFunction.class)
 	@ConditionalOnClass(WebClient.class)
 	public ExchangeFilterFunction webClientFilter(Tracer tracer, OtelJaegerProperties properties) {
 		return new WebClientFilter(tracer, properties);
 	}
 
 	@Bean
-	@ConditionalOnMissingBean
+	@ConditionalOnMissingBean(WebClient.Builder.class)
 	@ConditionalOnClass(WebClient.class)
-	public WebClient.Builder webClientBuilder(ExchangeFilterFunction webClientFilter) {
-		return WebClient.builder().filter(webClientFilter);
+	public WebClient.Builder webClientBuilder(ObjectProvider<ExchangeFilterFunction> filterProvider) {
+		WebClient.Builder builder = WebClient.builder();
+		filterProvider.ifAvailable(builder::filter);
+		return builder;
 	}
 
 	@Bean
 	@ConditionalOnMissingBean
 	@ConditionalOnClass(WebClient.class)
-	public WebClient webClient(WebClient.Builder webClientBuilder) {
-		return webClientBuilder.build();
+	public WebClient webClient(ObjectProvider<WebClient.Builder> builderProvider) {
+		WebClient.Builder builder = builderProvider.getIfAvailable();
+		if (builder == null) {
+			builder = WebClient.builder();
+		}
+		return builder.build();
+	}
+
+	private static boolean isAgentActive() {
+		return "true".equals(System.getProperty(RuntimeAttachRunListener.AGENT_ACTIVE_PROPERTY));
 	}
 }

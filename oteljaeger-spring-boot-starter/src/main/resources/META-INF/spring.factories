@@ -1,2 +1,5 @@
 org.springframework.boot.autoconfigure.EnableAutoConfiguration=\
 com.sophoun.oteljaeger.starter.OtelJaegerAutoConfiguration
+
+org.springframework.boot.SpringApplicationRunListener=\
+com.sophoun.oteljaeger.starter.RuntimeAttachRunListener

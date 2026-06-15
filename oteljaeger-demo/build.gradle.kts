@@ -11,6 +11,10 @@ dependencyManagement {
 	}
 }
 
+tasks.withType<org.springframework.boot.gradle.tasks.run.BootRun> {
+	jvmArgs = listOf("-Djava.net.preferIPv4Stack=true")
+}
+
 dependencies {
 	implementation(fileTree("libs") { include("*.jar") })
 	implementation("org.springframework.boot:spring-boot-starter-web")

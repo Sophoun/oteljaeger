@@ -4,13 +4,14 @@ A Spring Boot starter library for automatic distributed tracing using OpenTeleme
 
 ## Features
 
-- Automatic tracing of inbound HTTP requests (via Servlet Filter)
-- Automatic tracing of outbound RestTemplate calls (via ClientHttpRequestInterceptor)
+- **Automatic RestTemplate tracing** (via ClientHttpRequestInterceptor)
+- **Automatic WebClient tracing** (via ExchangeFilterFunction)
+- **OTel Java agent auto-attach** - instruments library-created HTTP clients (e.g., from `WebClient.builder()`) without any CLI flags
 - Request/response body capture (configurable)
 - Request/response header capture (configurable)
 - Context propagation across service calls
-- Auto-configured RestTemplate with tracing interceptor
-- **Fat JAR** with all dependencies included
+- Auto-configured `RestTemplate` and `WebClient` with tracing
+- **Fat JAR** with all dependencies included (includes embedded OTel Java agent)
 
 ## Requirements
 
@@ -32,7 +33,7 @@ cd oteljaeger
 ./gradlew :oteljaeger-spring-boot-starter:shadowJar
 ```
 
-Output: `oteljaeger-spring-boot-starter/build/libs/oteljaeger-spring-boot-starter-0.0.1-SNAPSHOT.jar` (20 MB)
+Output: `oteljaeger-spring-boot-starter/build/libs/oteljaeger-spring-boot-starter-0.0.1-SNAPSHOT.jar` (~37 MB)
 
 ---
 
@@ -61,10 +62,10 @@ dependencies {
     implementation(fileTree("libs") { include("*.jar") })
     implementation("org.springframework.boot:spring-boot-starter-web")
     
+    // Add this if you use WebClient
+    implementation("org.springframework.boot:spring-boot-starter-webflux")
+    
     // Your other dependencies...
-    implementation("com.fasterxml.jackson.core:jackson-databind")
-    implementation("org.projectlombok:lombok")
-    annotationProcessor("org.projectlombok:lombok")
 }
 ```
 
@@ -103,6 +104,13 @@ cp /path/to/oteljaeger-spring-boot-starter-0.0.1-SNAPSHOT.jar libs/
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
+            <version>${spring-boot.version}</version>
+        </dependency>
+        
+        <!-- Add this if you use WebClient -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-webflux</artifactId>
             <version>${spring-boot.version}</version>
         </dependency>
         
@@ -145,7 +153,9 @@ public class MyApplication {
 
 ---
 
-### Step 4: Create a REST Controller
+### Step 4: Create REST Controllers
+
+#### Using RestTemplate (auto-traced)
 
 ```java
 package com.example.myapp;
@@ -172,6 +182,44 @@ public class UserController {
     }
 }
 ```
+
+#### Using WebClient (auto-traced)
+
+```java
+package com.example.myapp;
+
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
+
+@RestController
+public class UserController {
+
+    private final WebClient webClient;
+
+    // Inject the auto-configured WebClient.Builder (includes tracing filter)
+    public UserController(WebClient.Builder webClientBuilder) {
+        this.webClient = webClientBuilder
+            .baseUrl("https://jsonplaceholder.typicode.com")
+            .build();
+    }
+
+    @GetMapping("/api/user-webclient")
+    public String getUserWebClient() {
+        // This call will be automatically traced
+        return webClient.get()
+            .uri("/users/{id}", 1)
+            .retrieve()
+            .bodyToMono(String.class)
+            .block();
+    }
+}
+```
+
+> **Note:** The starter automatically traces both `RestTemplate` and `WebClient`. The OTel Java agent
+> also instruments library-created `WebClient` instances (e.g., from `WebClient.builder()`) without
+> requiring any additional configuration.
 
 ---
 
@@ -232,9 +280,10 @@ docker-compose up -d
 mvn spring-boot:run
 ```
 
-2. Test your endpoint:
+2. Test your endpoints:
 ```bash
 curl http://localhost:8080/api/user
+curl http://localhost:8080/api/user-webclient
 ```
 
 3. View traces in Jaeger UI:
@@ -256,6 +305,54 @@ GET /api/user (1234ms)
     - http.request.body: (if POST/PUT)
     - http.response.body: {"id": 1, "name": "Leanne Graham", ...}
 ```
+
+---
+
+## OTel Java Agent Auto-Attach
+
+The starter automatically attaches the [OTel Java agent](https://github.com/open-telemetry/opentelemetry-java-instrumentation)
+at application startup via `RuntimeAttachRunListener`. This provides:
+
+- **Automatic instrumentation of library-created HTTP clients** - any `WebClient` or `RestTemplate`
+  created outside of Spring (e.g., via `WebClient.builder()` in a library) will be traced
+- **Zero CLI flags required** - no need for `-javaagent` JVM argument
+- **Context propagation** across all instrumented HTTP calls
+
+### How It Works
+
+1. `RuntimeAttachRunListener` runs during Spring Boot startup (before beans are created)
+2. It configures the agent to enable only HTTP client instrumentations:
+   - `otel.instrumentation.httpclient.enabled=true` (for RestTemplate)
+   - `otel.instrumentation.reactor-netty-client.enabled=true` (for WebClient)
+   - `otel.instrumentation.tomcat.enabled=false` (avoids server-side deadlocks)
+   - `otel.instrumentation.spring-web.enabled=false` (avoids server-side deadlocks)
+3. Attaches the agent to the running JVM
+4. The agent instruments all outgoing HTTP calls automatically
+
+### Overriding Agent Configuration
+
+You can override the default agent settings via system properties or environment variables:
+
+```bash
+# Via system properties
+java -Dotel.instrumentation.tomcat.enabled=true -jar my-app.jar
+
+# Via environment variables
+export OTEL_INSTRUMENTATION_TOMCAT_ENABLED=true
+java -jar my-app.jar
+```
+
+### Disabling Auto-Attach
+
+To disable the agent auto-attach and use manual instrumentation only:
+
+```properties
+# Set to false to skip agent attachment
+# The agent status is stored in system property: oteljaeger.agent.active
+```
+
+The auto-attach can be disabled by removing the `RuntimeAttachRunListener` registration from
+`META-INF/spring.factories`, or by catching and ignoring the agent attachment failure.
 
 ---
 
@@ -312,8 +409,6 @@ dependencies {
 
 ## Complete Example Project
 
-Here's a complete working example:
-
 ### build.gradle.kts (Gradle)
 
 ```kotlin
@@ -334,6 +429,7 @@ repositories {
 dependencies {
     implementation(fileTree("libs") { include("*.jar") })
     implementation("org.springframework.boot:spring-boot-starter-web")
+    implementation("org.springframework.boot:spring-boot-starter-webflux")
     testImplementation("org.springframework.boot:spring-boot-starter-test")
 }
 ```
@@ -346,20 +442,12 @@ package com.example.myapp;
 import com.sophoun.oteljaeger.starter.EnableOtelJaeger;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.context.annotation.Bean;
-import org.springframework.web.client.RestTemplate;
 
 @SpringBootApplication
 @EnableOtelJaeger
 public class MyApplication {
-
     public static void main(String[] args) {
         SpringApplication.run(MyApplication.class, args);
-    }
-
-    @Bean
-    public RestTemplate restTemplate() {
-        return new RestTemplate();
     }
 }
 ```
@@ -372,6 +460,7 @@ package com.example.myapp;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.reactive.function.client.WebClient;
 import java.util.Map;
 
 @RestController
@@ -381,20 +470,29 @@ public class UserController {
     @Autowired
     private RestTemplate restTemplate;
 
+    private final WebClient webClient;
+
+    public UserController(WebClient.Builder webClientBuilder) {
+        this.webClient = webClientBuilder
+            .baseUrl("https://jsonplaceholder.typicode.com")
+            .build();
+    }
+
     @GetMapping("/user")
-    public Map<String, Object> getUser() {
+    public Map<String, Object> getUserRestTemplate() {
         return restTemplate.getForObject(
             "https://jsonplaceholder.typicode.com/users/1", 
             Map.class
         );
     }
 
-    @GetMapping("/user/{id}/posts")
-    public Object[] getUserPosts(@PathVariable int id) {
-        return restTemplate.getForObject(
-            "https://jsonplaceholder.typicode.com/posts?userId=" + id, 
-            Object[].class
-        );
+    @GetMapping("/user-webclient/{id}")
+    public Map<String, Object> getUserWebClient(@PathVariable int id) {
+        return webClient.get()
+            .uri("/users/{id}", id)
+            .retrieve()
+            .bodyToMono(Map.class)
+            .block();
     }
 }
 ```
@@ -428,10 +526,19 @@ oteljaeger.exporter-endpoint=http://localhost:4318/v1/traces
 - Duration
 - Parent-child relationship with inbound request
 
+### Outbound WebClient Calls (Automatic)
+- HTTP method, URL, headers
+- Request body
+- Response body
+- Status code
+- Duration
+- Parent-child relationship with inbound request
+- Works with both Spring-managed and library-created WebClient instances
+
 ## Example Trace
 
 ```
-GET /api/users/1 (2340ms)
+GET /api/user (2340ms)
   HTTP GET /users/1 (325ms)
   HTTP GET /posts (107ms)
   HTTP GET /comments (68ms)
@@ -441,6 +548,8 @@ GET /api/users/1 (2340ms)
 ---
 
 ## Configuration Reference
+
+### Application Properties
 
 | Property | Default | Description |
 |----------|---------|-------------|
@@ -452,26 +561,54 @@ GET /api/users/1 (2340ms)
 | `oteljaeger.capture-bodies` | `true` | Capture request/response bodies |
 | `oteljaeger.max-body-size` | `65536` | Max body size to capture (-1 for unlimited) |
 
+### Agent Configuration (via system properties or env vars)
+
+| System Property | Env Variable | Default | Description |
+|-----------------|--------------|---------|-------------|
+| `otel.instrumentation.common.default.enabled` | `OTEL_INSTRUMENTATION_COMMON_DEFAULT_ENABLED` | `false` | Enable all instrumentations |
+| `otel.instrumentation.httpclient.enabled` | `OTEL_INSTRUMENTATION_HTTPCLIENT_ENABLED` | `true` | Trace HttpURLConnection (RestTemplate) |
+| `otel.instrumentation.reactor-netty-client.enabled` | `OTEL_INSTRUMENTATION_REACTOR_NETTY_CLIENT_ENABLED` | `true` | Trace Reactor Netty (WebClient) |
+| `otel.instrumentation.tomcat.enabled` | `OTEL_INSTRUMENTATION_TOMCAT_ENABLED` | `false` | Trace Tomcat server requests |
+| `otel.instrumentation.spring-web.enabled` | `OTEL_INSTRUMENTATION_SPRING_WEB_ENABLED` | `false` | Trace Spring MVC server requests |
+
 ---
 
 ## Auto-Configured Beans
 
+### Without OTel Agent (Manual Instrumentation)
+
 | Bean | Description |
 |------|-------------|
-| `OpenTelemetry` | OTEL SDK instance |
+| `OpenTelemetry` | Custom OTEL SDK instance |
 | `Tracer` | OTEL Tracer |
 | `OpenTelemetryFilter` | Inbound request tracing |
-| `RestTemplateInterceptor` | Outbound call tracing |
+| `RestTemplateInterceptor` | Outbound RestTemplate tracing |
 | `RestTemplateBeanPostProcessor` | Auto-adds interceptor to RestTemplates |
 | `RestTemplate` | Pre-configured with tracing interceptor |
+| `WebClientFilter` | Outbound WebClient tracing |
+| `WebClient.Builder` | Pre-configured with tracing filter |
+| `WebClient` | Pre-configured with tracing filter |
+
+### With OTel Agent (Agent Instrumentation)
+
+When the OTel Java agent attaches successfully, it provides its own OpenTelemetry SDK
+and instrumentations. The following manual beans are **skipped** to avoid conflicts:
+
+- `OpenTelemetryFilter`
+- `RestTemplateInterceptor`
+- `RestTemplateBeanPostProcessor`
+- `WebClientFilter`
+
+The agent handles all tracing automatically, including library-created HTTP clients.
 
 All beans use `@ConditionalOnMissingBean`, so you can override any of them.
 
 ---
 
-## Custom RestTemplate
+## Custom RestTemplate / WebClient
 
-If you need a custom `RestTemplate`, define your own bean - it will automatically get the tracing interceptor:
+If you need a custom `RestTemplate` or `WebClient`, define your own bean - it will automatically
+get tracing:
 
 ```java
 @Bean
@@ -479,6 +616,13 @@ public RestTemplate restTemplate(RestTemplateBuilder builder) {
     return builder
             .setConnectTimeout(Duration.ofSeconds(10))
             .setReadTimeout(Duration.ofSeconds(10))
+            .build();
+}
+
+@Bean
+public WebClient webClient(WebClient.Builder builder) {
+    return builder
+            .baseUrl("https://api.example.com")
             .build();
 }
 ```
@@ -499,6 +643,32 @@ Or exclude auto-configuration:
 
 ---
 
+## Platform Notes
+
+### macOS Apple Silicon
+
+On macOS with Apple Silicon (M1/M2/M3), the OTel Java agent disables Tomcat and Spring MVC
+server-side instrumentations by default to avoid deadlocks caused by Netty 4.1.70's incomplete
+Apple Silicon DNS support. Only HTTP client instrumentations are enabled.
+
+If you need server-side instrumentation on macOS, pass the JVM argument:
+
+```bash
+java -Djava.net.preferIPv4Stack=true -jar my-app.jar
+```
+
+### Linux / Production
+
+On Linux, all instrumentations work correctly. To enable server-side tracing:
+
+```bash
+java -Dotel.instrumentation.tomcat.enabled=true \
+     -Dotel.instrumentation.spring-web.enabled=true \
+     -jar my-app.jar
+```
+
+---
+
 ## Project Structure
 
 ```
@@ -513,17 +683,23 @@ oteljaeger/
 │       ├── EnableOtelJaeger.java           # @EnableOtelJaeger annotation
 │       ├── OtelJaegerProperties.java       # Configuration properties
 │       ├── OtelJaegerAutoConfiguration.java # Auto-configuration
-│       ├── OpenTelemetryFilter.java        # Inbound tracing
-│       ├── RestTemplateInterceptor.java    # Outbound tracing
+│       ├── OpenTelemetryFilter.java        # Inbound tracing (manual)
+│       ├── RestTemplateInterceptor.java    # Outbound RestTemplate tracing (manual)
 │       ├── RestTemplateBeanPostProcessor.java # Auto-adds interceptor
+│       ├── WebClientFilter.java            # Outbound WebClient tracing (manual)
+│       ├── RuntimeAttachRunListener.java   # OTel agent auto-attach
+│       ├── AgentNotActiveCondition.java    # Conditional for agent detection
 │       └── OtelConfig.java                # OTEL SDK setup
+├── src/main/resources/META-INF/
+│   └── spring.factories                    # Auto-config + RunListener registration
 └── oteljaeger-demo/                        # Demo application
     ├── build.gradle.kts
     └── src/main/java/.../demo/
         ├── OteljaegerDemoApplication.java  # @EnableOtelJaeger
         ├── UserController.java             # REST endpoints
-        ├── ExternalUserService.java        # External API calls
-        └── UserPipelineService.java        # 7-step pipeline
+        ├── ExternalUserService.java        # RestTemplate calls
+        ├── ExternalUserWebClientService.java # WebClient calls
+        └── UserPipelineService.java        # Multi-step pipeline
 ```
 
 ---

@@ -21,6 +21,7 @@ dependencies {
 
 	implementation("io.opentelemetry:opentelemetry-sdk:1.20.0")
 	implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.20.0")
+	implementation("io.opentelemetry.contrib:opentelemetry-runtime-attach:1.31.0-alpha")
 
 	compileOnly("org.springframework.boot:spring-boot-configuration-processor:2.6.0")
 	annotationProcessor("org.springframework.boot:spring-boot-configuration-processor:2.6.0")

@@ -19,7 +19,7 @@ class RestTemplateBeanPostProcessor implements BeanPostProcessor {
 
 	@Override
 	public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
-		if (bean instanceof RestTemplate) {
+		if (interceptor != null && bean instanceof RestTemplate) {
 			RestTemplate restTemplate = (RestTemplate) bean;
 			restTemplate.getInterceptors().add(interceptor);
 		}
