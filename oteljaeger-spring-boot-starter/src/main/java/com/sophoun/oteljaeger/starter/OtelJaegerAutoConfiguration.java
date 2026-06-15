@@ -77,7 +77,14 @@ public class OtelJaegerAutoConfiguration {
 	@Bean
 	@ConditionalOnMissingBean
 	@ConditionalOnClass(WebClient.class)
-	public WebClientBeanPostProcessor webClientBeanPostProcessor(ExchangeFilterFunction webClientFilter) {
-		return new WebClientBeanPostProcessor(webClientFilter);
+	public WebClient.Builder webClientBuilder(ExchangeFilterFunction webClientFilter) {
+		return WebClient.builder().filter(webClientFilter);
+	}
+
+	@Bean
+	@ConditionalOnMissingBean
+	@ConditionalOnClass(WebClient.class)
+	public WebClient webClient(WebClient.Builder webClientBuilder) {
+		return webClientBuilder.build();
 	}
 }
