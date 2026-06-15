@@ -20,6 +20,9 @@ public class UserController {
 	@Autowired
 	private UserPipelineService userPipelineService;
 
+	@Autowired
+	private ExternalUserWebClientService externalUserWebClientService;
+
 	@GetMapping("/user")
 	public Map<String, Object> getUsername() throws InterruptedException {
 		Thread.sleep(500);
@@ -50,5 +53,21 @@ public class UserController {
 		Map<String, String> response = new HashMap<>();
 		response.put("username", "testuser");
 		return ResponseEntity.ok(response);
+	}
+
+	@GetMapping("/user-webclient/{id}")
+	public ResponseEntity<Map<String, Object>> getUserByIdWebClient(@PathVariable Long id) {
+		try {
+			Map<String, Object> externalInfo = externalUserWebClientService.getUserInfo(id);
+			Map<String, Object> response = new HashMap<>();
+			response.put("userId", id);
+			response.put("externalInfo", externalInfo);
+			return ResponseEntity.ok(response);
+		} catch (Exception e) {
+			Map<String, Object> error = new HashMap<>();
+			error.put("error", e.getMessage());
+			error.put("userId", id);
+			return ResponseEntity.status(502).body(error);
+		}
 	}
 }
