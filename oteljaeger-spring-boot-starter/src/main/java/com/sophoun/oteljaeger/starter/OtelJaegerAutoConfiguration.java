@@ -103,7 +103,7 @@ public class OtelJaegerAutoConfiguration {
 	}
 
 	/**
-	 * When the OTel agent is active, it instruments Reactor Netty (WebClient) automatically.
+	 * When the OTel Java agent is active, it instruments Reactor Netty (WebClient) automatically.
 	 * We only inject the manual filter when the agent is NOT active to avoid duplicate spans.
 	 */
 	@Bean
@@ -123,6 +123,35 @@ public class OtelJaegerAutoConfiguration {
 				return bean;
 			}
 		};
+	}
+
+	// ── Agent-active body capture ──────────────────────────────────────
+
+	/**
+	 * When the OTel agent is active, it creates CLIENT spans for outbound requests
+	 * but does NOT capture request/response bodies. This filter only captures bodies
+	 * as events on the current (agent's) span, without creating a new span.
+	 */
+	@Bean
+	@Conditional(WhenAgentActiveCondition.class)
+	public WebClientBodyCaptureFilter webClientBodyCaptureFilter(OtelJaegerProperties properties) {
+		return new WebClientBodyCaptureFilter(properties);
+	}
+
+	/**
+	 * When the OTel agent is active, inject the body-only capture filter into
+	 * WeConnectorFactory's WebClient fields so outbound bodies are captured.
+	 */
+	@Bean
+	@ConditionalOnProperty(prefix = "oteljaeger", name = "traceExternalApi", havingValue = "true", matchIfMissing = true)
+	@Conditional(WhenAgentActiveCondition.class)
+	@ConditionalOnClass(name = "com.we3rother.connector.factory.WeConnectorFactory")
+	public WeConnectorBodyCaptureInjector weConnectorBodyCaptureInjector(ObjectProvider<WebClientBodyCaptureFilter> filterProvider) {
+		WebClientBodyCaptureFilter filter = filterProvider.getIfAvailable();
+		if (filter != null) {
+			return new WeConnectorBodyCaptureInjector(filter);
+		}
+		return null;
 	}
 
 	@Bean

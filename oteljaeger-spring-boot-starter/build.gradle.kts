@@ -7,7 +7,7 @@ plugins {
 }
 
 group = "com.sophoun"
-version = "0.0.1-SNAPSHOT"
+version = "0.0.10-SNAPSHOT"
 
 java {
 	withSourcesJar()
@@ -81,6 +81,16 @@ publishing {
 
 	repositories {
 		mavenLocal()
+
+		maven {
+			name = "SelfHost"
+			url = uri(findProperty("selfHostRepoUrl") as String? ?: "http://localhost:8081/repository/maven-releases/")
+			isAllowInsecureProtocol = true
+			credentials {
+				username = findProperty("selfHostRepoUsername") as String? ?: ""
+				password = findProperty("selfHostRepoPassword") as String? ?: ""
+			}
+		}
 
 		maven {
 			name = "OSSRH"
