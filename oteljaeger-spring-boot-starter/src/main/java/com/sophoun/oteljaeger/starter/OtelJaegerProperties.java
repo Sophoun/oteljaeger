@@ -10,94 +10,135 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 @ConfigurationProperties(prefix = "oteljaeger")
 public class OtelJaegerProperties {
 
-	/**
-	 * Enable or disable the tracing library.
-	 */
+	// ── General ──────────────────────────────────────────────────────
+
+	/** Enable or disable the tracing library. */
 	private boolean enabled = true;
 
-	/**
-	 * The service name reported to Jaeger.
-	 */
+	/** The service name reported to Jaeger. */
 	private String serviceName = "oteljaeger";
 
-	/**
-	 * The OTLP HTTP exporter endpoint URL.
-	 */
+	// ── OTLP Exporter ───────────────────────────────────────────────
+
+	/** The OTLP HTTP exporter endpoint URL (full URL with path). */
 	private String exporterEndpoint = "http://localhost:4318/v1/traces";
 
-	/**
-	 * Exporter timeout in seconds.
-	 */
+	/** OTLP protocol: {@code http/protobuf} or {@code grpc}. */
+	private String exporterProtocol = "http/protobuf";
+
+	/** Exporter timeout in seconds. */
 	private int exporterTimeoutSeconds = 10;
 
-	/**
-	 * Whether to capture request headers in traces.
-	 */
+	/** Trace exporter: {@code otlp}, {@code none}, {@code jaeger}, etc. */
+	private String tracesExporter = "otlp";
+
+	/** Metrics exporter: {@code none}, {@code otlp}, {@code prometheus}, etc. */
+	private String metricsExporter = "none";
+
+	/** Logs exporter: {@code none}, {@code otlp}, etc. */
+	private String logsExporter = "none";
+
+	// ── Instrumentation ──────────────────────────────────────────────
+
+	/** Enable Tomcat server instrumentation. Disable to avoid deadlocks with Spring Boot 2.6 + Reactor Netty. */
+	private boolean instrumentationTomcatEnabled = false;
+
+	/** Enable Servlet instrumentation. Disable together with Tomcat. */
+	private boolean instrumentationServletEnabled = false;
+
+	/** Enable Reactor Netty (WebClient) instrumentation. */
+	private boolean instrumentationNettyEnabled = true;
+
+	/** Enable Reactor instrumentation (Project Reactor). */
+	private boolean instrumentationReactorEnabled = true;
+
+	// ── Span Capture ─────────────────────────────────────────────────
+
+	/** Whether to capture request headers in traces. */
 	private boolean captureHeaders = true;
 
-	/**
-	 * Whether to capture request/response bodies in traces.
-	 */
+	/** Whether to capture request/response bodies in traces. */
 	private boolean captureBodies = true;
 
-	/**
-	 * Maximum body size to capture (in bytes). -1 for unlimited.
-	 */
+	/** Maximum body size to capture (in bytes). -1 for unlimited. */
 	private int maxBodySize = 65536;
 
-	public boolean isEnabled() {
-		return enabled;
-	}
+	// ── Tracing Scope ────────────────────────────────────────────────
 
-	public void setEnabled(boolean enabled) {
-		this.enabled = enabled;
-	}
+	/** Enable MyBatis SQL query tracing (maps to otel.instrumentation.mybatis.enabled). */
+	private boolean traceMyBatis = true;
 
-	public String getServiceName() {
-		return serviceName;
-	}
+	/** Enable WeExterfaceServiceFactory external API call tracing. */
+	private boolean traceExternalApi = true;
 
-	public void setServiceName(String serviceName) {
-		this.serviceName = serviceName;
-	}
+	/** Enable AWS SDK (S3, etc.) tracing (maps to otel.instrumentation.aws-sdk.enabled). */
+	private boolean traceAwsSdk = true;
 
-	public String getExporterEndpoint() {
-		return exporterEndpoint;
-	}
+	/** Enable Kafka producer/consumer tracing (maps to otel.instrumentation.kafka.enabled). */
+	private boolean traceKafka = true;
 
-	public void setExporterEndpoint(String exporterEndpoint) {
-		this.exporterEndpoint = exporterEndpoint;
-	}
+	/** Enable Spring Kafka tracing (maps to otel.instrumentation.spring-kafka.enabled). */
+	private boolean traceSpringKafka = true;
 
-	public int getExporterTimeoutSeconds() {
-		return exporterTimeoutSeconds;
-	}
+	// ── Getters & Setters ────────────────────────────────────────────
 
-	public void setExporterTimeoutSeconds(int exporterTimeoutSeconds) {
-		this.exporterTimeoutSeconds = exporterTimeoutSeconds;
-	}
+	public boolean isEnabled() { return enabled; }
+	public void setEnabled(boolean enabled) { this.enabled = enabled; }
 
-	public boolean isCaptureHeaders() {
-		return captureHeaders;
-	}
+	public String getServiceName() { return serviceName; }
+	public void setServiceName(String serviceName) { this.serviceName = serviceName; }
 
-	public void setCaptureHeaders(boolean captureHeaders) {
-		this.captureHeaders = captureHeaders;
-	}
+	public String getExporterEndpoint() { return exporterEndpoint; }
+	public void setExporterEndpoint(String exporterEndpoint) { this.exporterEndpoint = exporterEndpoint; }
 
-	public boolean isCaptureBodies() {
-		return captureBodies;
-	}
+	public String getExporterProtocol() { return exporterProtocol; }
+	public void setExporterProtocol(String exporterProtocol) { this.exporterProtocol = exporterProtocol; }
 
-	public void setCaptureBodies(boolean captureBodies) {
-		this.captureBodies = captureBodies;
-	}
+	public int getExporterTimeoutSeconds() { return exporterTimeoutSeconds; }
+	public void setExporterTimeoutSeconds(int exporterTimeoutSeconds) { this.exporterTimeoutSeconds = exporterTimeoutSeconds; }
 
-	public int getMaxBodySize() {
-		return maxBodySize;
-	}
+	public String getTracesExporter() { return tracesExporter; }
+	public void setTracesExporter(String tracesExporter) { this.tracesExporter = tracesExporter; }
 
-	public void setMaxBodySize(int maxBodySize) {
-		this.maxBodySize = maxBodySize;
-	}
+	public String getMetricsExporter() { return metricsExporter; }
+	public void setMetricsExporter(String metricsExporter) { this.metricsExporter = metricsExporter; }
+
+	public String getLogsExporter() { return logsExporter; }
+	public void setLogsExporter(String logsExporter) { this.logsExporter = logsExporter; }
+
+	public boolean isInstrumentationTomcatEnabled() { return instrumentationTomcatEnabled; }
+	public void setInstrumentationTomcatEnabled(boolean instrumentationTomcatEnabled) { this.instrumentationTomcatEnabled = instrumentationTomcatEnabled; }
+
+	public boolean isInstrumentationServletEnabled() { return instrumentationServletEnabled; }
+	public void setInstrumentationServletEnabled(boolean instrumentationServletEnabled) { this.instrumentationServletEnabled = instrumentationServletEnabled; }
+
+	public boolean isInstrumentationNettyEnabled() { return instrumentationNettyEnabled; }
+	public void setInstrumentationNettyEnabled(boolean instrumentationNettyEnabled) { this.instrumentationNettyEnabled = instrumentationNettyEnabled; }
+
+	public boolean isInstrumentationReactorEnabled() { return instrumentationReactorEnabled; }
+	public void setInstrumentationReactorEnabled(boolean instrumentationReactorEnabled) { this.instrumentationReactorEnabled = instrumentationReactorEnabled; }
+
+	public boolean isCaptureHeaders() { return captureHeaders; }
+	public void setCaptureHeaders(boolean captureHeaders) { this.captureHeaders = captureHeaders; }
+
+	public boolean isCaptureBodies() { return captureBodies; }
+	public void setCaptureBodies(boolean captureBodies) { this.captureBodies = captureBodies; }
+
+	public int getMaxBodySize() { return maxBodySize; }
+	public void setMaxBodySize(int maxBodySize) { this.maxBodySize = maxBodySize; }
+
+	public boolean isTraceMyBatis() { return traceMyBatis; }
+	public void setTraceMyBatis(boolean traceMyBatis) { this.traceMyBatis = traceMyBatis; }
+
+	public boolean isTraceExternalApi() { return traceExternalApi; }
+	public void setTraceExternalApi(boolean traceExternalApi) { this.traceExternalApi = traceExternalApi; }
+
+	public boolean isTraceAwsSdk() { return traceAwsSdk; }
+	public void setTraceAwsSdk(boolean traceAwsSdk) { this.traceAwsSdk = traceAwsSdk; }
+
+	public boolean isTraceKafka() { return traceKafka; }
+	public void setTraceKafka(boolean traceKafka) { this.traceKafka = traceKafka; }
+
+	public boolean isTraceSpringKafka() { return traceSpringKafka; }
+	public void setTraceSpringKafka(boolean traceSpringKafka) { this.traceSpringKafka = traceSpringKafka; }
 }

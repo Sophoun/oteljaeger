@@ -133,17 +133,16 @@ cp /path/to/oteljaeger-spring-boot-starter-0.0.1-SNAPSHOT.jar libs/
 
 ### Step 3: Enable Tracing in Your Application
 
-Add `@EnableOtelJaeger` annotation to your main application class:
+The starter auto-configures itself via `spring.factories`. Just add the dependency and
+configure `application.yml` — no annotation needed.
 
 ```java
 package com.example.myapp;
 
-import com.sophoun.oteljaeger.starter.EnableOtelJaeger;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-@EnableOtelJaeger
 public class MyApplication {
     public static void main(String[] args) {
         SpringApplication.run(MyApplication.class, args);
@@ -225,22 +224,21 @@ public class UserController {
 
 ### Step 5: Configure Application
 
-Create `src/main/resources/application.properties`:
+Create `src/main/resources/application.yml`:
 
-```properties
-# Application name
-spring.application.name=my-app
+```yaml
+spring:
+  application:
+    name: my-app
 
-# Server port
-server.port=8080
+server:
+  port: 8080
 
-# Otel Jaeger configuration
-oteljaeger.service-name=my-app
-oteljaeger.exporter-endpoint=http://localhost:4318/v1/traces
-oteljaeger.enabled=true
-oteljaeger.capture-headers=true
-oteljaeger.capture-bodies=true
-oteljaeger.max-body-size=65536
+# OpenTelemetry + Jaeger tracing
+oteljaeger:
+  enabled: true
+  service-name: my-app
+  exporter-endpoint: http://localhost:4318/v1/traces
 ```
 
 ---
@@ -320,39 +318,33 @@ at application startup via `RuntimeAttachRunListener`. This provides:
 
 ### How It Works
 
-1. `RuntimeAttachRunListener` runs during Spring Boot startup (before beans are created)
-2. It configures the agent to enable only HTTP client instrumentations:
-   - `otel.instrumentation.httpclient.enabled=true` (for RestTemplate)
-   - `otel.instrumentation.reactor-netty-client.enabled=true` (for WebClient)
-   - `otel.instrumentation.tomcat.enabled=false` (avoids server-side deadlocks)
-   - `otel.instrumentation.spring-web.enabled=false` (avoids server-side deadlocks)
-3. Attaches the agent to the running JVM
-4. The agent instruments all outgoing HTTP calls automatically
+1. `RuntimeAttachRunListener.starting()` runs first — sets the `otel.javaagent.testing.runtime-attach.main-method-check` bypass property
+2. `RuntimeAttachRunListener.environmentPrepared()` runs after `application.yml` is loaded — sets base agent flags (Tomcat disabled, Netty enabled, etc.), reads all `oteljaeger.*` properties, maps them to `otel.*` system properties, and attaches the agent
+3. When the agent is active, manual `WebClientFilter`, `webClientFilterInjector`, and `WeConnectorWebClientInjector` beans are disabled to avoid duplicate spans
 
 ### Overriding Agent Configuration
 
-You can override the default agent settings via system properties or environment variables:
+All agent settings can now be configured via `application.yml` (see [Configuration Reference](#configuration-reference)).
+You can also override via system properties or environment variables:
 
 ```bash
-# Via system properties
-java -Dotel.instrumentation.tomcat.enabled=true -jar my-app.jar
+# Via system properties (highest priority)
+java -Dotel.service.name=my-app -jar my-app.jar
+
+# Via CLI arguments
+java --oteljaeger.service-name=my-app -jar my-app.jar
 
 # Via environment variables
-export OTEL_INSTRUMENTATION_TOMCAT_ENABLED=true
+export OTEL_SERVICE_NAME=my-app
 java -jar my-app.jar
 ```
 
 ### Disabling Auto-Attach
 
-To disable the agent auto-attach and use manual instrumentation only:
+If the OTel agent fails to attach (e.g., due to class loading conflicts), it falls back to manual instrumentation automatically. The agent status is stored in system property `oteljaeger.agent.active` (`true`/`false`).
 
-```properties
-# Set to false to skip agent attachment
-# The agent status is stored in system property: oteljaeger.agent.active
-```
-
-The auto-attach can be disabled by removing the `RuntimeAttachRunListener` registration from
-`META-INF/spring.factories`, or by catching and ignoring the agent attachment failure.
+To force manual-only instrumentation, you can remove the `RuntimeAttachRunListener` registration from
+`META-INF/spring.factories`.
 
 ---
 
@@ -439,12 +431,10 @@ dependencies {
 ```java
 package com.example.myapp;
 
-import com.sophoun.oteljaeger.starter.EnableOtelJaeger;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 
 @SpringBootApplication
-@EnableOtelJaeger
 public class MyApplication {
     public static void main(String[] args) {
         SpringApplication.run(MyApplication.class, args);
@@ -497,28 +487,33 @@ public class UserController {
 }
 ```
 
-### application.properties
+### application.yml
 
-```properties
-spring.application.name=my-traced-app
-server.port=8080
+```yaml
+spring:
+  application:
+    name: my-traced-app
 
-oteljaeger.service-name=my-traced-app
-oteljaeger.exporter-endpoint=http://localhost:4318/v1/traces
+server:
+  port: 8080
+
+oteljaeger:
+  service-name: my-traced-app
+  exporter-endpoint: http://localhost:4318/v1/traces
 ```
 
 ---
 
 ## What Gets Traced
 
-### Inbound Requests (Automatic)
+### Inbound Requests (Manual Filter)
 - HTTP method, URL, headers
 - Request body (POST/PUT/PATCH)
 - Response body
 - Status code
 - Duration
 
-### Outbound RestTemplate Calls (Automatic)
+### Outbound RestTemplate Calls (Manual Interceptor)
 - HTTP method, URL, headers
 - Request body
 - Response body
@@ -526,7 +521,7 @@ oteljaeger.exporter-endpoint=http://localhost:4318/v1/traces
 - Duration
 - Parent-child relationship with inbound request
 
-### Outbound WebClient Calls (Automatic)
+### Outbound WebClient Calls (Agent or Manual Filter)
 - HTTP method, URL, headers
 - Request body
 - Response body
@@ -534,6 +529,16 @@ oteljaeger.exporter-endpoint=http://localhost:4318/v1/traces
 - Duration
 - Parent-child relationship with inbound request
 - Works with both Spring-managed and library-created WebClient instances
+
+### Automatic (Agent-Only Instrumentations)
+
+When the OTel agent is active, it automatically instruments:
+
+- **HTTP clients** — Reactor Netty (WebClient), HttpURLConnection (RestTemplate)
+- **Databases** — JDBC, MyBatis, Oracle, MySQL, PostgreSQL
+- **Messaging** — Kafka, Spring Kafka
+- **Cloud** — AWS SDK (S3, SQS, etc.)
+- **Frameworks** — Spring WebMVC (when enabled)
 
 ## Example Trace
 
@@ -549,27 +554,90 @@ GET /api/user (2340ms)
 
 ## Configuration Reference
 
-### Application Properties
+All configuration is done via `application.yml` (or `application.properties`) under the `oteljaeger` prefix.
+Each property is mapped to the corresponding `otel.*` system property for the OTel Java agent automatically.
+
+```yaml
+oteljaeger:
+  enabled: true
+  service-name: my-app
+  exporter-endpoint: http://localhost:4318/v1/traces
+  exporter-protocol: http/protobuf
+  exporter-timeout-seconds: 10
+  traces-exporter: otlp
+  metrics-exporter: none
+  logs-exporter: none
+  instrumentation-tomcat-enabled: false
+  instrumentation-servlet-enabled: false
+  instrumentation-netty-enabled: true
+  instrumentation-reactor-enabled: true
+  capture-headers: true
+  capture-bodies: true
+  max-body-size: 65536
+  trace-mybatis: true
+  trace-external-api: true
+  trace-aws-sdk: true
+  trace-kafka: true
+  trace-spring-kafka: true
+```
+
+### General
+
+| Property | Default | Mapped To | Description |
+|----------|---------|-----------|-------------|
+| `oteljaeger.enabled` | `true` | — | Enable/disable all tracing. Disables agent attachment and all manual beans. |
+| `oteljaeger.service-name` | `oteljaeger` | `otel.service.name` | Service name shown in Jaeger UI. |
+
+### OTLP Exporter
+
+| Property | Default | Mapped To | Description |
+|----------|---------|-----------|-------------|
+| `oteljaeger.exporter-endpoint` | `http://localhost:4318/v1/traces` | `otel.exporter.otlp.endpoint` (base URL) | OTLP HTTP endpoint. Path is stripped for the agent. |
+| `oteljaeger.exporter-protocol` | `http/protobuf` | `otel.exporter.otlp.protocol` | OTLP protocol: `http/protobuf` or `grpc`. |
+| `oteljaeger.exporter-timeout-seconds` | `10` | — (manual SDK only) | Exporter timeout in seconds. Only applies to manual SDK fallback. |
+| `oteljaeger.traces-exporter` | `otlp` | `otel.traces.exporter` | Trace exporter: `otlp`, `none`, `jaeger`, etc. |
+| `oteljaeger.metrics-exporter` | `none` | `otel.metrics.exporter` | Metrics exporter: `none`, `otlp`, `prometheus`, etc. |
+| `oteljaeger.logs-exporter` | `none` | `otel.logs.exporter` | Logs exporter: `none`, `otlp`, etc. |
+
+### Instrumentation
+
+| Property | Default | Mapped To | Description |
+|----------|---------|-----------|-------------|
+| `oteljaeger.instrumentation-tomcat-enabled` | `false` | `otel.instrumentation.tomcat.enabled` | Enable Tomcat server instrumentation. Disable to avoid deadlocks with Spring Boot 2.6 + Reactor Netty. |
+| `oteljaeger.instrumentation-servlet-enabled` | `false` | `otel.instrumentation.servlet.enabled` | Enable Servlet instrumentation. Disable together with Tomcat. |
+| `oteljaeger.instrumentation-netty-enabled` | `true` | `otel.instrumentation.netty-4.1.enabled` | Enable Reactor Netty (WebClient) instrumentation. |
+| `oteljaeger.instrumentation-reactor-enabled` | `true` | `otel.instrumentation.reactor.enabled` | Enable Project Reactor instrumentation. |
+
+### Span Capture (Manual Filters Only)
+
+These apply only to the manual `OpenTelemetryFilter`, `RestTemplateInterceptor`, and `WebClientFilter`.
+They have no effect when the OTel agent is active (agent handles its own span attributes).
 
 | Property | Default | Description |
 |----------|---------|-------------|
-| `oteljaeger.enabled` | `true` | Enable/disable tracing |
-| `oteljaeger.service-name` | `oteljaeger` | Service name in Jaeger UI |
-| `oteljaeger.exporter-endpoint` | `http://localhost:4318/v1/traces` | OTLP HTTP endpoint |
-| `oteljaeger.exporter-timeout-seconds` | `10` | Exporter timeout |
-| `oteljaeger.capture-headers` | `true` | Capture request/response headers |
-| `oteljaeger.capture-bodies` | `true` | Capture request/response bodies |
-| `oteljaeger.max-body-size` | `65536` | Max body size to capture (-1 for unlimited) |
+| `oteljaeger.capture-headers` | `true` | Capture request/response headers as span attributes. |
+| `oteljaeger.capture-bodies` | `true` | Capture request/response bodies as span attributes. |
+| `oteljaeger.max-body-size` | `65536` | Maximum body size to capture in bytes. `-1` for unlimited. |
 
-### Agent Configuration (via system properties or env vars)
+### Tracing Scope
 
-| System Property | Env Variable | Default | Description |
-|-----------------|--------------|---------|-------------|
-| `otel.instrumentation.common.default.enabled` | `OTEL_INSTRUMENTATION_COMMON_DEFAULT_ENABLED` | `false` | Enable all instrumentations |
-| `otel.instrumentation.httpclient.enabled` | `OTEL_INSTRUMENTATION_HTTPCLIENT_ENABLED` | `true` | Trace HttpURLConnection (RestTemplate) |
-| `otel.instrumentation.reactor-netty-client.enabled` | `OTEL_INSTRUMENTATION_REACTOR_NETTY_CLIENT_ENABLED` | `true` | Trace Reactor Netty (WebClient) |
-| `otel.instrumentation.tomcat.enabled` | `OTEL_INSTRUMENTATION_TOMCAT_ENABLED` | `false` | Trace Tomcat server requests |
-| `otel.instrumentation.spring-web.enabled` | `OTEL_INSTRUMENTATION_SPRING_WEB_ENABLED` | `false` | Trace Spring MVC server requests |
+| Property | Default | Mapped To | Description |
+|----------|---------|-----------|-------------|
+| `oteljaeger.trace-mybatis` | `true` | `otel.instrumentation.mybatis.enabled` | Enable MyBatis SQL query tracing. |
+| `oteljaeger.trace-external-api` | `true` | — | Enable WeExterfaceServiceFactory external API call tracing. |
+| `oteljaeger.trace-aws-sdk` | `true` | `otel.instrumentation.aws-sdk.enabled` | Enable AWS SDK (S3, etc.) tracing. |
+| `oteljaeger.trace-kafka` | `true` | `otel.instrumentation.kafka.enabled` | Enable Kafka producer/consumer tracing. |
+| `oteljaeger.trace-spring-kafka` | `true` | `otel.instrumentation.spring-kafka.enabled` | Enable Spring Kafka tracing. |
+
+### Property Resolution Order
+
+Properties are resolved in this priority order (highest first):
+
+1. **JVM system properties** (`-Dotel.service.name=...`)
+2. **CLI arguments** (`--oteljaeger.service-name=...`)
+3. **Environment variables** (`OTEL_SERVICE_NAME=...`)
+4. **application.yml** (`oteljaeger.service-name: ...`)
+5. **Default value**
 
 ---
 
@@ -588,18 +656,24 @@ GET /api/user (2340ms)
 | `WebClientFilter` | Outbound WebClient tracing |
 | `WebClient.Builder` | Pre-configured with tracing filter |
 | `WebClient` | Pre-configured with tracing filter |
+| `webClientFilterInjector` | BeanPostProcessor — injects filter into all WebClient beans |
+| `weExterfaceBeanPostProcessor` | BeanPostProcessor — instruments WeExterfaceServiceFactory |
+| `weConnectorWebClientInjector` | Injects filter into WeConnector's internal WebClient |
 
 ### With OTel Agent (Agent Instrumentation)
 
 When the OTel Java agent attaches successfully, it provides its own OpenTelemetry SDK
 and instrumentations. The following manual beans are **skipped** to avoid conflicts:
 
-- `OpenTelemetryFilter`
-- `RestTemplateInterceptor`
-- `RestTemplateBeanPostProcessor`
-- `WebClientFilter`
+- `WebClientFilter` — agent instruments Reactor Netty automatically
+- `webClientFilterInjector` BeanPostProcessor — agent handles all WebClient instances
+- `WeConnectorWebClientInjector` — agent instruments WeConnector's internal WebClient
 
 The agent handles all tracing automatically, including library-created HTTP clients.
+
+`OpenTelemetryFilter` (inbound) and `RestTemplateInterceptor` (outbound) remain active
+even with the agent, since they provide additional span attributes (bodies, headers) that
+the agent does not capture by default.
 
 All beans use `@ConditionalOnMissingBean`, so you can override any of them.
 
@@ -645,13 +719,21 @@ Or exclude auto-configuration:
 
 ## Platform Notes
 
-### macOS Apple Silicon
+### macOS / Spring Boot 2.6 + Reactor Netty
 
-On macOS with Apple Silicon (M1/M2/M3), the OTel Java agent disables Tomcat and Spring MVC
-server-side instrumentations by default to avoid deadlocks caused by Netty 4.1.70's incomplete
-Apple Silicon DNS support. Only HTTP client instrumentations are enabled.
+Tomcat and Servlet instrumentations are disabled by default to avoid deadlocks
+caused by Spring Boot 2.6 + Reactor Netty class loading conflicts. Only HTTP client
+instrumentations (Netty, Reactor) are enabled.
 
-If you need server-side instrumentation on macOS, pass the JVM argument:
+To enable server-side instrumentation, add to your `application.yml`:
+
+```yaml
+oteljaeger:
+  instrumentation-tomcat-enabled: true
+  instrumentation-servlet-enabled: true
+```
+
+Or pass as JVM argument:
 
 ```bash
 java -Djava.net.preferIPv4Stack=true -jar my-app.jar
@@ -659,13 +741,8 @@ java -Djava.net.preferIPv4Stack=true -jar my-app.jar
 
 ### Linux / Production
 
-On Linux, all instrumentations work correctly. To enable server-side tracing:
-
-```bash
-java -Dotel.instrumentation.tomcat.enabled=true \
-     -Dotel.instrumentation.spring-web.enabled=true \
-     -jar my-app.jar
-```
+All instrumentations work correctly on Linux. To enable server-side tracing, set the
+properties above in your `application.yml` or pass them as JVM arguments.
 
 ---
 
@@ -679,23 +756,25 @@ oteljaeger/
 ├── README.md                               # This file
 ├── oteljaeger-spring-boot-starter/         # Library (Fat JAR)
 │   ├── build.gradle.kts
-│   └── src/main/java/.../starter/
-│       ├── EnableOtelJaeger.java           # @EnableOtelJaeger annotation
-│       ├── OtelJaegerProperties.java       # Configuration properties
-│       ├── OtelJaegerAutoConfiguration.java # Auto-configuration
-│       ├── OpenTelemetryFilter.java        # Inbound tracing (manual)
-│       ├── RestTemplateInterceptor.java    # Outbound RestTemplate tracing (manual)
-│       ├── RestTemplateBeanPostProcessor.java # Auto-adds interceptor
-│       ├── WebClientFilter.java            # Outbound WebClient tracing (manual)
-│       ├── RuntimeAttachRunListener.java   # OTel agent auto-attach
-│       ├── AgentNotActiveCondition.java    # Conditional for agent detection
-│       └── OtelConfig.java                # OTEL SDK setup
-├── src/main/resources/META-INF/
-│   └── spring.factories                    # Auto-config + RunListener registration
+│   └── src/main/
+│       ├── java/.../starter/
+│       │   ├── OtelJaegerProperties.java       # Configuration properties (all oteljaeger.* keys)
+│       │   ├── OtelJaegerAutoConfiguration.java # Auto-configuration
+│       │   ├── OtelConfig.java                 # OTEL SDK setup (agent or manual)
+│       │   ├── OpenTelemetryFilter.java        # Inbound request tracing (manual)
+│       │   ├── RestTemplateInterceptor.java    # Outbound RestTemplate tracing (manual)
+│       │   ├── RestTemplateBeanPostProcessor.java # Auto-adds interceptor
+│       │   ├── WebClientFilter.java            # Outbound WebClient tracing (manual)
+│       │   ├── WeConnectorWebClientInjector.java # Injects filter into WeConnector factory
+│       │   ├── WeExterfaceInstrumentation.java # Wraps WeExterfaceServiceFactory via Proxy
+│       │   ├── RuntimeAttachRunListener.java   # OTel agent auto-attach + YAML bridging
+│       │   └── WhenAgentInactiveCondition.java # Condition: true when agent is NOT active
+│       └── resources/META-INF/
+│           └── spring.factories                # Auto-config + RunListener registration
 └── oteljaeger-demo/                        # Demo application
     ├── build.gradle.kts
     └── src/main/java/.../demo/
-        ├── OteljaegerDemoApplication.java  # @EnableOtelJaeger
+        ├── OteljaegerDemoApplication.java  # Spring Boot main class
         ├── UserController.java             # REST endpoints
         ├── ExternalUserService.java        # RestTemplate calls
         ├── ExternalUserWebClientService.java # WebClient calls

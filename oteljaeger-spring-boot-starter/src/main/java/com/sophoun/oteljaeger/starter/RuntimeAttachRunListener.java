@@ -1,78 +1,140 @@
 package com.sophoun.oteljaeger.starter;
 
 import io.opentelemetry.contrib.attach.RuntimeAttach;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
 import org.springframework.boot.ConfigurableBootstrapContext;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.SpringApplicationRunListener;
+import org.springframework.core.env.ConfigurableEnvironment;
 
-/**
- * SpringApplicationRunListener that programmatically attaches the OpenTelemetry Java agent
- * at application startup.
- *
- * <p>When the agent attaches successfully, it provides its own OpenTelemetry SDK and
- * automatically instruments HTTP clients (RestTemplate, WebClient/Reactor Netty).</p>
- *
- * <p>Default agent configuration disables server-side instrumentations (Tomcat, Spring MVC)
- * to avoid deadlocks on macOS Apple Silicon + Netty 4.1.70. Only HTTP client instrumentations
- * (HttpURLConnection for RestTemplate, Reactor Netty for WebClient) are enabled.</p>
- *
- * <p>Users can override any setting via system properties ({@code -Dotel.*}) or
- * environment variables ({@code OTEL_*}).</p>
- *
- * <p>Limitations:
- * <ul>
- *   <li>Requires JDK (not JRE)</li>
- *   <li>Requires {@code -XX:+EnableDynamicAgentLoading} on Java 21+</li>
- *   <li>The agent cannot be updated independently of the application</li>
- * </ul>
- */
+import java.net.URI;
+
 public class RuntimeAttachRunListener implements SpringApplicationRunListener {
-
-    private static final Logger log = LoggerFactory.getLogger(RuntimeAttachRunListener.class);
 
     public static final String AGENT_ACTIVE_PROPERTY = "oteljaeger.agent.active";
 
+    private final String[] args;
+
     public RuntimeAttachRunListener(SpringApplication application, String[] args) {
+        this.args = args;
     }
 
     @Override
     public void starting(ConfigurableBootstrapContext bootstrapContext) {
+        // Bypass main() method check since we're called from SpringApplicationRunListener
+        System.setProperty("otel.javaagent.testing.runtime-attach.main-method-check", "false");
+    }
+
+    @Override
+    public void environmentPrepared(ConfigurableBootstrapContext bootstrapContext, ConfigurableEnvironment environment) {
+        // 1. Parse --oteljaeger.* CLI args (highest priority)
+        parseArgs();
+
+        // 2. Read all oteljaeger.* from application.yml and set otel.* system properties for the agent
+        setAgentSystemProperty(environment, "oteljaeger.traces-exporter",        "otel.traces.exporter",             "otlp");
+        setAgentSystemProperty(environment, "oteljaeger.exporter-protocol",      "otel.exporter.otlp.protocol",      "http/protobuf");
+        setAgentSystemProperty(environment, "oteljaeger.metrics-exporter",       "otel.metrics.exporter",            "none");
+        setAgentSystemProperty(environment, "oteljaeger.logs-exporter",          "otel.logs.exporter",               "none");
+
+        setAgentSystemProperty(environment, "oteljaeger.instrumentation-tomcat-enabled",  "otel.instrumentation.tomcat.enabled",  "false");
+        setAgentSystemProperty(environment, "oteljaeger.instrumentation-servlet-enabled", "otel.instrumentation.servlet.enabled", "false");
+        setAgentSystemProperty(environment, "oteljaeger.instrumentation-netty-enabled",   "otel.instrumentation.netty-4.1.enabled", "true");
+        setAgentSystemProperty(environment, "oteljaeger.instrumentation-reactor-enabled", "otel.instrumentation.reactor.enabled",  "true");
+
+        // Map tracing scope flags to agent's instrumentation toggles
+        setAgentSystemProperty(environment, "oteljaeger.trace-kafka",        "otel.instrumentation.kafka.enabled",          "true");
+        setAgentSystemProperty(environment, "oteljaeger.trace-spring-kafka", "otel.instrumentation.spring-kafka.enabled",   "true");
+        setAgentSystemProperty(environment, "oteljaeger.trace-aws-sdk",      "otel.instrumentation.aws-sdk.enabled",        "true");
+        setAgentSystemProperty(environment, "oteljaeger.trace-mybatis",      "otel.instrumentation.mybatis.enabled",        "true");
+
+        // 3. Resolve agent's service name
+        //    Priority: -Dotel.service.name / OTEL_SERVICE_NAME > --oteljaeger.service-name > application.yml > default
+        if (System.getProperty("otel.service.name") == null && System.getenv("OTEL_SERVICE_NAME") == null) {
+            String serviceName = resolveValue(environment, "oteljaeger.service-name", "spring-boot-app");
+            System.setProperty("otel.service.name", serviceName);
+        }
+
+        // 4. Resolve agent's OTLP endpoint
+        //    Priority: -Dotel.exporter.otlp.endpoint > --oteljaeger.exporter-endpoint > application.yml > default
+        if (System.getProperty("otel.exporter.otlp.endpoint") == null) {
+            String endpoint = resolveValue(environment, "oteljaeger.exporter-endpoint", "http://localhost:4318/v1/traces");
+            System.setProperty("otel.exporter.otlp.endpoint", toBaseUrl(endpoint));
+        }
+
+        System.out.println("[oteljaeger] Agent config:");
+        System.out.println("  service.name         = " + System.getProperty("otel.service.name"));
+        System.out.println("  endpoint             = " + System.getProperty("otel.exporter.otlp.endpoint"));
+        System.out.println("  traces.exporter     = " + System.getProperty("otel.traces.exporter"));
+        System.out.println("  exporter.protocol    = " + System.getProperty("otel.exporter.otlp.protocol"));
+        System.out.println("  tomcat.enabled       = " + System.getProperty("otel.instrumentation.tomcat.enabled"));
+        System.out.println("  netty.enabled        = " + System.getProperty("otel.instrumentation.netty-4.1.enabled"));
+
+        // 5. Attach the agent — application.yml properties are now available
         try {
-            setDefaultAgentConfig();
-            log.info("Attempting runtime attach of OpenTelemetry Java agent...");
-            RuntimeAttach.attachJavaagentToCurrentJvm();
+            RuntimeAttach.attachJavaagentToCurrentJVM();
             System.setProperty(AGENT_ACTIVE_PROPERTY, "true");
-            log.info("OpenTelemetry Java agent attached successfully. "
-                    + "Agent-provided instrumentation will handle HTTP client tracing.");
+            System.out.println("[oteljaeger] OTel agent attached successfully");
         } catch (Exception e) {
             System.setProperty(AGENT_ACTIVE_PROPERTY, "false");
-            log.warn("Failed to attach OpenTelemetry Java agent at runtime. "
-                    + "Library-created WebClient tracing may not work. "
-                    + "Consider using -javaagent JVM argument instead. Error: {}", e.getMessage());
+            System.out.println("[oteljaeger] Failed to attach OTel agent: " + e.getMessage());
+            System.out.println("[oteljaeger] Falling back to manual OTel SDK");
         }
     }
 
     /**
-     * Set default agent configuration via system properties before the agent starts.
-     * These are defaults that users can override via {@code -Dotel.*} system properties
-     * or {@code OTEL_*} environment variables.
-     *
-     * <p>Disables server-side instrumentations to avoid deadlocks on macOS Apple Silicon.
-     * Enables only HTTP client instrumentations for RestTemplate and WebClient tracing.</p>
+     * Reads a value from environment (CLI args > system property > application.yml > default)
+     * and sets it as a system property for the OTel agent.
      */
-    private void setDefaultAgentConfig() {
-        setIfNotSet("otel.instrumentation.common.default.enabled", "false");
-        setIfNotSet("otel.instrumentation.httpclient.enabled", "true");
-        setIfNotSet("otel.instrumentation.reactor-netty-client.enabled", "true");
-        setIfNotSet("otel.instrumentation.spring-web.enabled", "false");
-        setIfNotSet("otel.instrumentation.tomcat.enabled", "false");
+    private void setAgentSystemProperty(ConfigurableEnvironment environment, String yamlKey, String otelKey, String defaultValue) {
+        // System property overrides YAML (set by CLI parseArgs or user via -D)
+        if (System.getProperty(otelKey) != null) {
+            return;
+        }
+        String value = environment.getProperty(yamlKey);
+        if (value == null) {
+            value = defaultValue;
+        }
+        System.setProperty(otelKey, value);
     }
 
-    private void setIfNotSet(String key, String value) {
-        if (System.getProperty(key) == null) {
-            System.setProperty(key, value);
+    /**
+     * Resolves a value: system property > YAML > default.
+     */
+    private String resolveValue(ConfigurableEnvironment environment, String yamlKey, String defaultValue) {
+        String sysPropKey = yamlKey;
+        String sysVal = System.getProperty(sysPropKey);
+        if (sysVal != null) {
+            return sysVal;
+        }
+        String yamlVal = environment.getProperty(yamlKey);
+        return yamlVal != null ? yamlVal : defaultValue;
+    }
+
+    /**
+     * Extracts base URL from a full OTLP endpoint URL.
+     * e.g. "http://localhost:4318/v1/traces" -> "http://localhost:4318"
+     */
+    private String toBaseUrl(String endpoint) {
+        try {
+            URI uri = URI.create(endpoint);
+            return uri.getScheme() + "://" + uri.getAuthority();
+        } catch (Exception e) {
+            return "http://localhost:4318";
+        }
+    }
+
+    private void parseArgs() {
+        if (args == null) return;
+        for (String arg : args) {
+            if (arg != null && arg.startsWith("--oteljaeger.")) {
+                int eq = arg.indexOf('=');
+                if (eq > 0) {
+                    String key = arg.substring(2, eq);   // strip "--"
+                    String value = arg.substring(eq + 1);
+                    if (System.getProperty(key) == null) {
+                        System.setProperty(key, value);
+                    }
+                }
+            }
         }
     }
 }

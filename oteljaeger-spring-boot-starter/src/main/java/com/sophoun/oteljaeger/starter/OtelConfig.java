@@ -2,7 +2,6 @@ package com.sophoun.oteljaeger.starter;
 
 import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.common.AttributeKey;
-import io.opentelemetry.api.trace.Tracer;
 import io.opentelemetry.exporter.otlp.http.trace.OtlpHttpSpanExporter;
 import io.opentelemetry.sdk.OpenTelemetrySdk;
 import io.opentelemetry.sdk.trace.SdkTracerProvider;
@@ -19,6 +18,12 @@ class OtelConfig {
 	}
 
 	OpenTelemetry openTelemetry() {
+		// If the OTel agent is active, use its GlobalOpenTelemetry instance
+		if (isAgentActive()) {
+			return io.opentelemetry.api.GlobalOpenTelemetry.get();
+		}
+
+		// Otherwise, create a manual SDK (fallback when agent is not available)
 		OtlpHttpSpanExporter exporter = OtlpHttpSpanExporter.builder()
 				.setEndpoint(properties.getExporterEndpoint())
 				.setTimeout(properties.getExporterTimeoutSeconds(), TimeUnit.SECONDS)
@@ -37,7 +42,7 @@ class OtelConfig {
 				.buildAndRegisterGlobal();
 	}
 
-	Tracer tracer(OpenTelemetry openTelemetry) {
-		return openTelemetry.getTracer(properties.getServiceName());
+	private boolean isAgentActive() {
+		return "true".equals(System.getProperty(RuntimeAttachRunListener.AGENT_ACTIVE_PROPERTY));
 	}
 }

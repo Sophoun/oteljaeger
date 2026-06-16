@@ -18,10 +18,14 @@ dependencies {
 	implementation("org.springframework.boot:spring-boot-starter-web:2.6.0")
 	implementation("org.springframework.boot:spring-boot-autoconfigure:2.6.0")
 	compileOnly("org.springframework.boot:spring-boot-starter-webflux:2.6.0")
+	compileOnly("org.mybatis.spring.boot:mybatis-spring-boot-starter:2.2.0")
+	compileOnly("org.springframework.kafka:spring-kafka:2.8.0")
+	compileOnly("org.apache.kafka:kafka-clients:2.8.0")
+	compileOnly("software.amazon.awssdk:s3:2.20.0")
 
 	implementation("io.opentelemetry:opentelemetry-sdk:1.20.0")
 	implementation("io.opentelemetry:opentelemetry-exporter-otlp:1.20.0")
-	implementation("io.opentelemetry.contrib:opentelemetry-runtime-attach:1.31.0-alpha")
+	implementation("io.opentelemetry.contrib:opentelemetry-runtime-attach:1.20.0-alpha")
 
 	compileOnly("org.springframework.boot:spring-boot-configuration-processor:2.6.0")
 	annotationProcessor("org.springframework.boot:spring-boot-configuration-processor:2.6.0")

@@ -4,15 +4,17 @@ import io.opentelemetry.api.OpenTelemetry;
 import io.opentelemetry.api.trace.Tracer;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.BeansException;
 import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.config.BeanPostProcessor;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnClass;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnWebApplication;
+import org.springframework.context.annotation.Conditional;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Conditional;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.reactive.function.client.ExchangeFilterFunction;
@@ -20,15 +22,6 @@ import org.springframework.web.reactive.function.client.WebClient;
 
 import java.time.Duration;
 
-/**
- * Auto-configuration for OpenTelemetry + Jaeger tracing.
- * Activated when {@code @EnableOtelJaeger} is present.
- *
- * <p>When the OTel Java agent is attached at runtime (via RuntimeAttachRunListener),
- * it provides its own OpenTelemetry instance and automatically instruments HTTP clients.
- * In that case, the custom OpenTelemetry SDK, RestTemplate interceptor, and WebClientFilter
- * are skipped to avoid conflicts.</p>
- */
 @Configuration
 @ConditionalOnWebApplication
 @ConditionalOnProperty(prefix = "oteljaeger", name = "enabled", havingValue = "true", matchIfMissing = true)
@@ -40,10 +33,6 @@ public class OtelJaegerAutoConfiguration {
 	@Bean
 	@ConditionalOnMissingBean
 	public OpenTelemetry openTelemetry(OtelJaegerProperties properties) {
-		if (isAgentActive()) {
-			log.info("OTel Java agent detected. Using agent-provided OpenTelemetry instance.");
-			return io.opentelemetry.api.GlobalOpenTelemetry.get();
-		}
 		OtelConfig config = new OtelConfig(properties);
 		return config.openTelemetry();
 	}
@@ -55,21 +44,18 @@ public class OtelJaegerAutoConfiguration {
 	}
 
 	@Bean
-	@Conditional(AgentNotActiveCondition.class)
 	@ConditionalOnMissingBean
 	public OpenTelemetryFilter openTelemetryFilter(Tracer tracer, OtelJaegerProperties properties) {
 		return new OpenTelemetryFilter(tracer, properties);
 	}
 
 	@Bean
-	@Conditional(AgentNotActiveCondition.class)
 	@ConditionalOnMissingBean
 	public RestTemplateInterceptor restTemplateInterceptor(Tracer tracer, OtelJaegerProperties properties) {
 		return new RestTemplateInterceptor(tracer, properties);
 	}
 
 	@Bean
-	@Conditional(AgentNotActiveCondition.class)
 	@ConditionalOnMissingBean
 	public RestTemplateBeanPostProcessor restTemplateBeanPostProcessor(RestTemplateInterceptor interceptor) {
 		return new RestTemplateBeanPostProcessor(interceptor);
@@ -84,10 +70,14 @@ public class OtelJaegerAutoConfiguration {
 				.build();
 	}
 
+	/**
+	 * When the OTel agent is active, it instruments Reactor Netty (WebClient) automatically.
+	 * We only create the manual WebClientFilter when the agent is NOT active to avoid duplicate spans.
+	 */
 	@Bean
-	@Conditional(AgentNotActiveCondition.class)
 	@ConditionalOnMissingBean(ExchangeFilterFunction.class)
 	@ConditionalOnClass(WebClient.class)
+	@Conditional(WhenAgentInactiveCondition.class)
 	public ExchangeFilterFunction webClientFilter(Tracer tracer, OtelJaegerProperties properties) {
 		return new WebClientFilter(tracer, properties);
 	}
@@ -112,7 +102,57 @@ public class OtelJaegerAutoConfiguration {
 		return builder.build();
 	}
 
-	private static boolean isAgentActive() {
-		return "true".equals(System.getProperty(RuntimeAttachRunListener.AGENT_ACTIVE_PROPERTY));
+	/**
+	 * When the OTel agent is active, it instruments Reactor Netty (WebClient) automatically.
+	 * We only inject the manual filter when the agent is NOT active to avoid duplicate spans.
+	 */
+	@Bean
+	@ConditionalOnClass(WebClient.class)
+	@Conditional(WhenAgentInactiveCondition.class)
+	public BeanPostProcessor webClientFilterInjector(ObjectProvider<ExchangeFilterFunction> filterProvider) {
+		return new BeanPostProcessor() {
+			@Override
+			public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
+				if (bean instanceof WebClient) {
+					ExchangeFilterFunction filter = filterProvider.getIfAvailable();
+					if (filter != null) {
+						log.info("[oteljaeger] Injecting OTel filter into WebClient bean: {}", beanName);
+						return ((WebClient) bean).mutate().filter(filter).build();
+					}
+				}
+				return bean;
+			}
+		};
+	}
+
+	@Bean
+	@ConditionalOnProperty(prefix = "oteljaeger", name = "traceExternalApi", havingValue = "true", matchIfMissing = true)
+	@ConditionalOnClass(name = "com.we3rother.exterface.factory.WeExterfaceServiceFactory")
+	public BeanPostProcessor weExterfaceBeanPostProcessor(OtelJaegerProperties properties) {
+		return new BeanPostProcessor() {
+			@Override
+			public Object postProcessAfterInitialization(Object bean, String beanName) throws BeansException {
+				if (bean != null && "com.we3rother.exterface.factory.WeExterfaceServiceFactory".equals(bean.getClass().getName())) {
+					WeExterfaceInstrumentation.instrument(bean);
+				}
+				return bean;
+			}
+		};
+	}
+
+	/**
+	 * When the OTel agent is active, it instruments Reactor Netty (WebClient) automatically.
+	 * We only inject the filter into WeConnectorFactory when the agent is NOT active.
+	 */
+	@Bean
+	@ConditionalOnProperty(prefix = "oteljaeger", name = "traceExternalApi", havingValue = "true", matchIfMissing = true)
+	@Conditional(WhenAgentInactiveCondition.class)
+	@ConditionalOnClass(name = "com.we3rother.connector.factory.WeConnectorFactory")
+	public WeConnectorWebClientInjector weConnectorWebClientInjector(ObjectProvider<ExchangeFilterFunction> filterProvider) {
+		ExchangeFilterFunction filter = filterProvider.getIfAvailable();
+		if (filter != null) {
+			return new WeConnectorWebClientInjector(filter);
+		}
+		return null;
 	}
 }
