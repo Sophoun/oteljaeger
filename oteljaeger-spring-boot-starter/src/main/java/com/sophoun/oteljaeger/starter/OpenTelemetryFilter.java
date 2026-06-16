@@ -1,5 +1,7 @@
 package com.sophoun.oteljaeger.starter;
 
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
@@ -14,7 +16,6 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.io.UnsupportedEncodingException;
 import java.util.Enumeration;
 
 class OpenTelemetryFilter extends OncePerRequestFilter {
@@ -66,13 +67,13 @@ class OpenTelemetryFilter extends OncePerRequestFilter {
 				byte[] requestBody = cachedRequest.getContentAsByteArray();
 				if (requestBody.length > 0) {
 					String body = truncate(new String(requestBody, getEncoding(cachedRequest.getCharacterEncoding())));
-					span.setAttribute("http.request.body", body);
+					span.addEvent("http.request.body", Attributes.of(AttributeKey.stringKey("body"), body));
 				}
 
 				byte[] responseBody = cachedResponse.getContentAsByteArray();
 				if (responseBody.length > 0) {
 					String body = truncate(new String(responseBody, getEncoding(cachedResponse.getCharacterEncoding())));
-					span.setAttribute("http.response.body", body);
+					span.addEvent("http.response.body", Attributes.of(AttributeKey.stringKey("body"), body));
 				}
 			}
 

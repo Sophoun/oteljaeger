@@ -1,5 +1,7 @@
 package com.sophoun.oteljaeger.starter;
 
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
@@ -66,7 +68,7 @@ class WebClientFilter implements ExchangeFilterFunction {
 										if (bodyBytes != null && bodyBytes.length > 0) {
 											String responseBody = truncate(
 													new String(bodyBytes, StandardCharsets.UTF_8));
-											span.setAttribute("http.response.body", responseBody);
+											span.addEvent("http.response.body", Attributes.of(AttributeKey.stringKey("body"), responseBody));
 										}
 										return ClientResponse.create(response.statusCode())
 												.headers(h -> h.putAll(response.headers().asHttpHeaders()))
@@ -117,7 +119,7 @@ class WebClientFilter implements ExchangeFilterFunction {
 									dataBuffer.read(bytes);
 									DataBufferUtils.release(dataBuffer);
 									String requestBody = truncate(new String(bytes, StandardCharsets.UTF_8));
-									span.setAttribute("http.request.body", requestBody);
+									span.addEvent("http.request.body", Attributes.of(AttributeKey.stringKey("body"), requestBody));
 									return super.writeWith(Mono.just(
 											DefaultDataBufferFactory.sharedInstance.wrap(bytes)));
 								});

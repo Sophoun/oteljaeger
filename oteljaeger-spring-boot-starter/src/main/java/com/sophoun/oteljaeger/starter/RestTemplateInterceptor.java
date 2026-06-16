@@ -1,5 +1,7 @@
 package com.sophoun.oteljaeger.starter;
 
+import io.opentelemetry.api.common.AttributeKey;
+import io.opentelemetry.api.common.Attributes;
 import io.opentelemetry.api.trace.Span;
 import io.opentelemetry.api.trace.StatusCode;
 import io.opentelemetry.api.trace.Tracer;
@@ -48,7 +50,7 @@ class RestTemplateInterceptor implements ClientHttpRequestInterceptor {
 
 			if (properties.isCaptureBodies() && body != null && body.length > 0) {
 				String requestBody = truncate(new String(body));
-				span.setAttribute("http.request.body", requestBody);
+				span.addEvent("http.request.body", Attributes.of(AttributeKey.stringKey("body"), requestBody));
 			}
 
 			ClientHttpResponse response = execution.execute(request, body);
@@ -66,7 +68,7 @@ class RestTemplateInterceptor implements ClientHttpRequestInterceptor {
 			if (properties.isCaptureBodies()) {
 				String responseBody = truncate(new String(responseBytes));
 				if (!responseBody.isEmpty()) {
-					span.setAttribute("http.response.body", responseBody);
+					span.addEvent("http.response.body", Attributes.of(AttributeKey.stringKey("body"), responseBody));
 				}
 			}
 
