@@ -6,7 +6,13 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.SpringApplicationRunListener;
 import org.springframework.core.env.ConfigurableEnvironment;
 
+import java.io.File;
+import java.io.InputStream;
 import java.net.URI;
+import java.net.URL;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 
 public class RuntimeAttachRunListener implements SpringApplicationRunListener {
 
@@ -68,7 +74,46 @@ public class RuntimeAttachRunListener implements SpringApplicationRunListener {
         System.out.println("  tomcat.enabled       = " + System.getProperty("otel.instrumentation.tomcat.enabled"));
         System.out.println("  netty.enabled        = " + System.getProperty("otel.instrumentation.netty-4.1.enabled"));
 
-        // 5. Attach the agent — application.yml properties are now available
+        // 5. Set extension JARs — extract bundled otel-netty-plugin.jar
+        if (System.getProperty("otel.javaagent.extensions") == null) {
+            try {
+                String extensionName = "otel-netty-plugin.jar";
+                Path resolvedPath = null;
+
+                // Strategy 1: look for the JAR on filesystem next to the running JAR
+                URL runningJarUrl = getClass().getProtectionDomain().getCodeSource().getLocation();
+                if (runningJarUrl != null) {
+                    File runningJar = new File(runningJarUrl.toURI());
+                    File siblingJar = new File(runningJar.getParentFile(), extensionName);
+                    if (siblingJar.exists()) {
+                        resolvedPath = siblingJar.toPath();
+                        System.out.println("[oteljaeger] Extension JAR found next to running JAR: " + resolvedPath.toAbsolutePath());
+                    }
+                }
+
+                // Strategy 2: extract from classpath resource to temp file
+                if (resolvedPath == null) {
+                    InputStream is = getClass().getClassLoader().getResourceAsStream(extensionName);
+                    if (is != null) {
+                        resolvedPath = Files.createTempFile("otel-netty-plugin-", ".jar");
+                        resolvedPath.toFile().deleteOnExit();
+                        Files.copy(is, resolvedPath, StandardCopyOption.REPLACE_EXISTING);
+                        is.close();
+                        System.out.println("[oteljaeger] Extension JAR extracted to: " + resolvedPath.toAbsolutePath());
+                    }
+                }
+
+                if (resolvedPath != null) {
+                    System.setProperty("otel.javaagent.extensions", resolvedPath.toAbsolutePath().toString());
+                } else {
+                    System.out.println("[oteljaeger] Extension JAR not found: " + extensionName);
+                }
+            } catch (Exception e) {
+                System.out.println("[oteljaeger] Failed to resolve extension JAR: " + e.getMessage());
+            }
+        }
+
+        // 6. Attach the agent — application.yml properties are now available
         try {
             RuntimeAttach.attachJavaagentToCurrentJVM();
             System.setProperty(AGENT_ACTIVE_PROPERTY, "true");

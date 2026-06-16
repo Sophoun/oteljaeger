@@ -6,12 +6,30 @@ plugins {
 	id("com.github.johnrengelman.shadow") version "7.1.2"
 }
 
-group = "com.sophoun"
-version = "0.0.10-SNAPSHOT"
+group = "com.cmcb.dib"
+version = "0.0.12"
 
 java {
 	withSourcesJar()
 	withJavadocJar()
+}
+
+sourceSets {
+	main {
+		resources {
+			srcDir("src/libs")
+		}
+	}
+}
+
+val copyExtensionJar by tasks.registering(Copy::class) {
+	from("src/libs/otel-netty-plugin.jar")
+	into(layout.buildDirectory.dir("libs"))
+}
+
+tasks.named("build") {
+	dependsOn("shadowJar")
+	dependsOn(copyExtensionJar)
 }
 
 dependencies {
@@ -41,10 +59,6 @@ tasks.named<com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar>("shadowJ
 	exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA")
 }
 
-tasks.named("build") {
-	dependsOn("shadowJar")
-}
-
 publishing {
 	publications {
 		create<MavenPublication>("mavenJava") {
@@ -64,7 +78,7 @@ publishing {
 
 				developers {
 					developer {
-						id.set("sophoun")
+						id.set("sophoun.nheum")
 						name.set("Sophoun NHEUM")
 						email.set("sophoun.unix@gmail.com")
 					}
@@ -92,14 +106,14 @@ publishing {
 			}
 		}
 
-		maven {
-			name = "OSSRH"
-			url = uri("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/")
-			credentials {
-				username = findProperty("ossrhUsername") as String? ?: ""
-				password = findProperty("ossrhPassword") as String? ?: ""
-			}
-		}
+//		maven {
+//			name = "OSSRH"
+//			url = uri("https://s01.oss.sonatype.org/service/local/staging/deploy/maven2/")
+//			credentials {
+//				username = findProperty("ossrhUsername") as String? ?: ""
+//				password = findProperty("ossrhPassword") as String? ?: ""
+//			}
+//		}
 	}
 }
 
